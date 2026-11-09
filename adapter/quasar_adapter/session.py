@@ -483,6 +483,15 @@ class StationSession:
         ))
         self._finish(turn)
 
+    async def _respond_sound(self, turn: Turn, directives: list[dict]) -> None:
+        """The answer as a sound stored on the station, without words; HA hears it was played,
+        as after speech."""
+        await self._end_recognition(turn, "")
+        await self._send(aapi.alice_response(
+            turn.message_id, turn.request_id, turn.sequence_number, directives=directives,
+        ))
+        self._playback_finished(turn)
+
     def _error_sound(self) -> list[dict]:
         if not self.cfg.error_sound:
             return []
@@ -563,6 +572,16 @@ class StationSession:
     async def _cmd_voice_respond(self, data: dict) -> dict:
         turn = self._turn(data)
         urls = [data["tts_url"]] if data.get("tts_url") else []
+        if sound := data.get("sound"):
+            # A sound stored on the station instead of words (the answer confirmed with a sound);
+            # an unknown name falls back to the audio of the answer.
+            try:
+                directives = [aapi.local_sound(str(sound))]
+            except ValueError:
+                _LOGGER.warning("[%s] unknown station sound %r, see EStoredSound", self.station.device_id, sound)
+            else:
+                self._spawn(turn, self._respond_sound(turn, directives), "sound")
+                return {}
         self._spawn(turn, self._speak(turn, data.get("text", ""), urls, bool(data.get("listen"))), "speak")
         return {}
 

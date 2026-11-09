@@ -120,6 +120,42 @@ async def test_pipeline_error_plays_station_sound(station, ha):
     assert sound.SoundToPlay == aapi._AudioFilePlayer.EStoredSound.Value("SpotterCancel")
 
 
+async def test_a_command_confirmed_with_a_station_sound(station, ha, tts_file):
+    """voice.respond with a stored sound: the station plays it instead of the answer's audio, no
+    words; HA hears the playback finished, as after speech. An unknown sound falls back to the
+    audio."""
+    turn_id = await _voice_until_recognized(station, ha, "voice-ack")
+    assert (await ha.request("voice.stt_end", DEVICE_ID, {"turn_id": turn_id, "text": "выключи свет"}))["ok"]
+    assert (await station.expect_event("AsrResult")).Event.AsrResult.EndOfUtt
+    await station.recv()  # mic stream close
+    reply = await ha.request("voice.respond", DEVICE_ID, {
+        "turn_id": turn_id, "text": "Выключила свет", "tts_url": tts_file, "sound": "AliceIoTSoundsTurnOff",
+    })
+    assert reply["ok"], reply
+    resp = await station.expect_event("AliceResponse")
+    alice = resp.Event.AliceResponse
+    assert not alice.VoiceResponse.OutputSpeech.Text  # no words
+    directives = alice.Response.Directives
+    assert [d.Name for d in directives] == ["local_audio_file_play"]
+    sound = aapi.audio_file_player_pb2.TAudioFilePlayerCapability.TLocalAudioFilePlayDirective()
+    sound.ParseFromString(directives[0].PayloadRaw)
+    assert sound.SoundToPlay == aapi._AudioFilePlayer.EStoredSound.Value("AliceIoTSoundsTurnOff")
+    assert (await ha.expect("voice.playback_finished"))["data"] == {"turn_id": turn_id}
+
+
+async def test_an_unknown_station_sound_plays_the_audio(station, ha, tts_file):
+    turn_id = await _voice_until_recognized(station, ha, "voice-ack2")
+    assert (await ha.request("voice.stt_end", DEVICE_ID, {"turn_id": turn_id, "text": "включи"}))["ok"]
+    assert (await station.expect_event("AsrResult")).Event.AsrResult.EndOfUtt
+    await station.recv()
+    reply = await ha.request("voice.respond", DEVICE_ID, {
+        "turn_id": turn_id, "text": "Включила", "tts_url": tts_file, "sound": "NoSuchSound",
+    })
+    assert reply["ok"], reply
+    resp = await station.expect_event("AliceResponse")
+    assert [d.Name for d in resp.Event.AliceResponse.Response.Directives] == ["tts_play_placeholder"]
+
+
 async def test_silent_ha_times_out_with_error_sound(adapter, station, ha):
     server, _http = adapter
     from quasar_adapter.server import HUB_KEY

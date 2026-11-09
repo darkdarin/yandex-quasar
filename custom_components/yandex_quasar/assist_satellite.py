@@ -36,6 +36,14 @@ PARALLEL_UPDATES = 0
 ANNOUNCE_TIMEOUT = 300
 AUDIO_CHUNK_TIMEOUT = 3
 
+# The station's own sounds for a command confirmed with a sound instead of words: what was turned
+# on or done plays "turned on", what was turned off "turned off" (Alice's smart home sounds).
+ACK_SOUNDS = {
+    "on": "AliceIoTSoundsTurnOn",
+    "off": "AliceIoTSoundsTurnOff",
+    "done": "AliceIoTSoundsTurnOn",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: YandexQuasarConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
@@ -63,6 +71,7 @@ class YandexQuasarSatellite(YandexQuasarEntity, AssistSatelliteEntity):
         self._responded = False
         self._response_text = ""
         self._continue_conversation = False
+        self._acknowledge: str | None = None  # the answer is a sound: "on", "off" or "done"
         self._announcements: dict[str, asyncio.Future[dict]] = {}
         self._native_timers: set[str] = set()  # HA timer ids mirrored on the station
 
@@ -193,6 +202,7 @@ class YandexQuasarSatellite(YandexQuasarEntity, AssistSatelliteEntity):
         self._responded = False
         self._response_text = ""
         self._continue_conversation = False
+        self._acknowledge = None
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._audio_queue = queue
         self._client.set_audio_handler(self._turn_seq, queue.put_nowait)
@@ -250,18 +260,30 @@ class YandexQuasarSatellite(YandexQuasarEntity, AssistSatelliteEntity):
             self._continue_conversation = bool(output.get("continue_conversation"))
             speech = (output.get("response") or {}).get("speech") or {}
             self._response_text = (speech.get("plain") or {}).get("speech", "")
+            # An agent that confirms with a sound says so in the speech's extra_data (FlowPilot:
+            # {"acknowledge": "on" | "off" | "done"}).
+            extra = (speech.get("plain") or {}).get("extra_data") or {}
+            ack = extra.get("acknowledge") if isinstance(extra, dict) else None
+            self._acknowledge = ack if ack in ACK_SOUNDS else None
         elif event.type is PipelineEventType.TTS_START:
             self._response_text = data.get("tts_input") or self._response_text
+            if data.get("acknowledge_override"):  # Home Assistant's own agent: the beep instead
+                self._acknowledge = self._acknowledge or "done"
         elif event.type is PipelineEventType.TTS_END:
             tts_output = data.get("tts_output") or {}
             url = tts_output.get("url")
             self._responded = True
-            self._send("voice.respond", {
+            respond = {
                 "turn_id": turn_id,
                 "text": self._response_text,
                 "tts_url": async_process_play_media_url(self.hass, url) if url else None,
                 "listen": self._continue_conversation,
-            })
+            }
+            if self._acknowledge and not self._continue_conversation:
+                # the station's own sound of a smart home command, instead of the beep file
+                # (an older adapter ignores it and plays the file)
+                respond["sound"] = ACK_SOUNDS[self._acknowledge]
+            self._send("voice.respond", respond)
         elif event.type is PipelineEventType.ERROR:
             self._end_audio()
             self._responded = True
