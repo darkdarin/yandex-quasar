@@ -1,5 +1,16 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
+
+# Without the Supervisor (plain Docker, see docker-compose.yml) there are no app options: settings come from
+# QUASAR_* variables, and /data holds the API token, the station registry and the backend seed files.
+if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+    export QUASAR_DATA_DIR="${QUASAR_DATA_DIR:-/data}"
+    export QUASAR_SEED_DIR="${QUASAR_SEED_DIR:-${QUASAR_DATA_DIR}/seed}"
+    mkdir -p "$QUASAR_DATA_DIR" "$QUASAR_SEED_DIR"
+    cd "$QUASAR_DATA_DIR" || exit 1
+    exec python3 -m quasar_adapter serve -c "$QUASAR_DATA_DIR/config.toml"
+fi
+
 export QUASAR_DATA_DIR=/data
 export QUASAR_PORT="$(bashio::config 'port')"
 export QUASAR_MIC_GAIN_DB="$(bashio::config 'mic_gain_db')"

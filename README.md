@@ -37,7 +37,8 @@
 
 - Яндекс Станция с root и доступом по SSH или ADB. Как получить root — [hackalice.me](https://hackalice.me/start/).
   Проверено на **Яндекс Станции Миди** (прошивка 0.369.1.50), другие модели не проверялись.
-- Home Assistant OS (или Supervised) с установленным [HACS](https://hacs.xyz/).
+- Home Assistant с установленным [HACS](https://hacs.xyz/). На Home Assistant OS и Supervised адаптер ставится как
+  app, а если Home Assistant работает в Docker — отдельным контейнером (шаг 1, вариант без Supervisor).
 - Assist-пайплайн на русском: **Настройки → Голосовые ассистенты**. Подойдёт любой: облачный STT/TTS или Whisper/Piper.
 - Станция и Home Assistant в одной локальной сети. Узнайте IP Home Assistant, он понадобится на шаге 3.
 
@@ -55,6 +56,28 @@
 2. Установите app и запустите его.
 3. Откройте вкладку **Журнал** и скопируйте токен из строки `Generated new HA API token: …`. Он нужен на шаге 2.
    Если хотите задать свой токен, впишите его в опцию `api_token` на вкладке **Конфигурация** и перезапустите app.
+
+#### Вариант без Supervisor (Home Assistant в Docker)
+
+Если у вас нет раздела «Приложения» (Home Assistant установлен в Docker), запустите адаптер отдельным
+контейнером из того же образа. Скачайте [docker-compose.yml](docker-compose.yml) на машину в той же сети, что
+станция, и выполните:
+
+```sh
+docker compose up -d
+cat data/api_token        # токен для шага 2
+```
+
+- Нужна сеть хоста (`network_mode: host` уже стоит в файле): станция подключается к адаптеру напрямую, а сам
+  адаптер объявляет себя в сети для Home Assistant и Music Assistant.
+- Настройки задаются переменными `QUASAR_*` в `docker-compose.yml`, их названия совпадают с опциями app
+  (`QUASAR_MIC_GAIN_DB`, `QUASAR_API_TOKEN` и т. д.).
+- Всё, что адаптер хранит, лежит в папке `data/` рядом с файлом: токен, список станций, файлы станции для полной
+  отвязки (`data/seed/`, туда же их кладёт «Подключить станцию» на шаге 3).
+- Если Home Assistant тоже работает в сети хоста, он найдёт адаптер сам. Иначе на шаге 2 добавьте интеграцию
+  вручную: IP машины с адаптером и порт `8080`.
+- На шаге 3 вместо IP Home Assistant везде указывайте IP машины, где запущен адаптер.
+- Обновление: `docker compose pull && docker compose up -d`.
 
 ### Шаг 2. Поставить интеграцию
 
@@ -129,7 +152,8 @@ cfg, _ = json.JSONDecoder().raw_decode(d[d.index('{'):]); json.dump(cfg, open('s
 ```
 
 Положите `sync_info_base.json` и `devices.json` в папку конфигурации app на HA: `/addon_configs/7391c79f_quasar_adapter/`
-(видна через app Terminal & SSH, Samba или Studio Code Server). Перезапустите app.
+(видна через app Terminal & SSH, Samba или Studio Code Server). Перезапустите app. Если адаптер запущен в Docker
+без Supervisor, папка — `data/seed/` рядом с `docker-compose.yml`, а перезапуск — `docker compose restart`.
 
 > 🔒 `devices.json` содержит ключи станции: никому его не отправляйте и не публикуйте.
 

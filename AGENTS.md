@@ -12,6 +12,8 @@
 - `station-agent/` — опциональный агент на станции (Go): кнопки, LED, мьют.
 - `ha-addon/` — упаковка адаптера как HA OS add-on (app). `README.md` и `DOCS.md` там — для пользователей
   (страница app в магазине и вкладка «Документация»); сборка и релиз описаны ниже.
+- `docker-compose.yml` — тот же образ app без Supervisor (HA в Docker): `run.sh` без `SUPERVISOR_TOKEN` берёт
+  настройки из `QUASAR_*`, данные и seed-файлы — в томе `/data` (`/data/seed`).
 
 ## Документация (читать перед работой)
 
@@ -50,7 +52,7 @@
 - Не пушить в `main` поднятую версию без тега и релиза в том же push: магазин увидит новую версию app и попробует
   скачать образ `:<version>`, которого ещё нет, — обновление упадёт. Dev-сборки на живой HA (локальный app) тоже требуют
   новой версии; их изменения копятся в разделе changelog этой версии до релиза.
-- CI: `.github/workflows/adapter.yml` (pytest и пробная сборка образа amd64), `validate.yml` (hassfest, HACS, app
+- CI: `.github/workflows/adapter.yml` (pytest, пробная сборка образа amd64 и его запуск без Supervisor), `validate.yml` (hassfest, HACS, app
   lint), `release.yml` (образ и релиз по тегу).
 
 ### Сборка app

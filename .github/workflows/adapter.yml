@@ -38,4 +38,20 @@ jobs:
           platforms: linux/amd64
           build-args: BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.14-alpine3.22
           push: false
+          load: true
+          tags: quasar-adapter:ci
           cache-from: type=gha,scope=amd64
+      # The image must also run without the Supervisor (docker-compose.yml): run.sh falls back to QUASAR_* variables.
+      - name: Start without the Supervisor
+        run: |
+          mkdir -p data
+          docker run -d --name adapter --network host -v "$PWD/data:/data" -e QUASAR_SENDSPIN_ENABLED=false \
+            quasar-adapter:ci
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null "http://127.0.0.1:8080/quasar/get_sync_info?device_id=ci" && break
+            sleep 2
+          done
+          docker logs adapter
+          curl -sf -o /dev/null "http://127.0.0.1:8080/quasar/get_sync_info?device_id=ci"
+          test -s data/api_token
+          test -d data/seed

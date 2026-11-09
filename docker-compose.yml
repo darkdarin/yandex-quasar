@@ -1,0 +1,27 @@
+# Quasar Adapter without the Home Assistant Supervisor: for Home Assistant installed in Docker (Container install)
+# or any other Docker host on the same LAN as the station. The image is the same one the HA app uses.
+#
+#   docker compose up -d
+#   cat data/api_token        # token for the "Яндекс Станция" integration
+#
+# Settings are QUASAR_* variables (the same names as the app options, see ha-addon/DOCS.md).
+services:
+  quasar-adapter:
+    image: ghcr.io/darkdarin/quasar-adapter:latest
+    container_name: quasar-adapter
+    restart: unless-stopped
+    # Required: the station connects to ws://<host>:8080/uni.ws, the adapter announces itself over mDNS and opens
+    # a Sendspin player for Music Assistant per station (ports 8928, 8929, ...). Bridge networking breaks all three.
+    network_mode: host
+    volumes:
+      # API token, station registry and backend seed files (seed/devices.json, seed/sync_info_base.json).
+      - ./data:/data
+    environment:
+      QUASAR_PORT: "8080"
+      QUASAR_LOG_LEVEL: info
+      # QUASAR_API_TOKEN: ""             # fixed integration token instead of the generated data/api_token
+      # QUASAR_ADVERTISE_HOST: ""        # LAN IP given to the station; empty = autodetect
+      # QUASAR_MIC_GAIN_DB: "30"
+      # QUASAR_SPEECH_THRESHOLD_DB: "-40"
+      # QUASAR_SPOTTER_TAIL_MS: "300"
+      # QUASAR_GLAGOL_ACCEPT_ANY: "true"
