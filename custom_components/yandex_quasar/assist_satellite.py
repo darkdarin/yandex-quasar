@@ -202,7 +202,7 @@ class YandexQuasarSatellite(YandexQuasarEntity, AssistSatelliteEntity):
                 audio_stream=self._stream(queue),
                 start_stage=PipelineStage.STT,
                 end_stage=PipelineStage.TTS,
-                wake_word_phrase=data.get("wake_word"),
+                wake_word_phrase=data.get("wake_word") or None,
             ),
             f"{self.entity_id} pipeline",
         )

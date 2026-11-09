@@ -11,7 +11,7 @@ from google.protobuf.json_format import MessageToDict
 
 from quasar_adapter import aapi
 
-from .conftest import DEVICE_ID, make_opus, make_opus_expr
+from .conftest import DEVICE_ID, FakeStation, make_opus, make_opus_expr
 
 
 async def test_bad_token_rejected(adapter):
@@ -404,3 +404,46 @@ async def test_include_wake_word(adapter, station, ha):
     pcm = await _wake_turn_audio(station, ha, "voice-ww", 15, make_opus_expr(1.0, TAIL_THEN_COMMAND),
                                  make_opus(0.5, 500), 1.4)
     assert len(pcm) >= 16000 * 2 * 1.45
+
+
+async def test_second_connection_keeps_the_turn(adapter, station, ha, tts_file):
+    """The station opens another uniproxy WS right after VoiceInput: the turn survives, replies keep their socket."""
+    server, http = adapter
+    from quasar_adapter.server import HUB_KEY
+
+    turn_id = await _voice_until_recognized(station, ha, "voice-reconnect")
+    ws2 = await http.ws_connect(server.make_url("/uni.ws"), headers={"X-UPRX-DEVICE-ID": DEVICE_ID})
+    second = FakeStation(ws2)
+    await asyncio.sleep(0.2)
+    hub = server.app[HUB_KEY]
+    assert hub.sessions[DEVICE_ID].socket_count == 2
+    assert hub.stations[DEVICE_ID].state.connection == "online"
+
+    # The reply to the VoiceInput goes to the connection it came on.
+    assert (await ha.request("voice.stt_end", DEVICE_ID, {"turn_id": turn_id, "text": "включи свет"}))["ok"]
+    assert (await station.expect_event("AsrResult")).Event.AsrResult.EndOfUtt
+    # Server-initiated messages go to the newest connection.
+    assert (await ha.request("volume.set", DEVICE_ID, {"level": 0.5}))["ok"]
+    assert (await second.expect_event("Push")).Event.Push.Directives[0].Name == "sound_set_level"
+
+    # Closing the first connection does not take the station offline; closing the last one does.
+    await station.ws.close()
+    await asyncio.sleep(0.2)
+    assert hub.stations[DEVICE_ID].state.connection == "online"
+    assert hub.sessions[DEVICE_ID].socket_count == 1
+    await ws2.close()
+    seen = []
+    while not any(e["type"] == "station.state" and e["data"]["connection"] == "offline" for e in seen):
+        seen.append(await asyncio.wait_for(ha.events.get(), 5))
+    # The unfinished turn ends with the session, not with the first connection.
+    assert {"turn_id": turn_id, "reason": "disconnected"} in [e["data"] for e in seen if e["type"] == "voice.stop"]
+    assert DEVICE_ID not in hub.sessions
+
+
+async def test_empty_spotter_phrase_falls_back_to_wake_word(station, ha):
+    msg = station.voice_input("voice-nophrase", 17)
+    msg.Event.VoiceInput.SpotterPhrase = ""  # seen on real activations; HA then rejected repeats for ""
+    await station.send(msg)
+    await station.expect_event("InputStartAck")
+    start = await ha.expect("voice.start")
+    assert start["data"]["wake_word"] == "Алиса" and start["data"]["reason"] == "wake_word"

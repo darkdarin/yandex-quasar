@@ -6,6 +6,7 @@ Protocol facts this code relies on are documented in the project Notion («За�
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import contextlib
 import itertools
 import logging
@@ -72,11 +73,24 @@ class Turn:
     listen: bool = False
 
 
+# Connections a station may hold at once. It opens a new uniproxy WS while the previous one is still alive (seen
+# mid-turn, right after VoiceInput); older ones beyond this are closed.
+MAX_SOCKETS = 4
+ORIGIN_MEMORY = 256  # message/stream ids remembered to route replies
+
+
 class StationSession:
+    """One station, possibly over several uniproxy connections.
+
+    Replies go to the connection the request came on (by RefMessageId / stream id), server-initiated messages to
+    the newest one. The session, and the station's "online" state, lasts until its last connection closes.
+    """
+
     def __init__(self, hub: Hub, station: Station, ws: web.WebSocketResponse) -> None:
         self.hub = hub
         self.station = station
-        self.ws = ws
+        self._sockets: list[web.WebSocketResponse] = [ws]
+        self._origin: OrderedDict[str, web.WebSocketResponse] = OrderedDict()
         self.cfg = hub.config
         self._send_lock = asyncio.Lock()
         self._next_stream = 2
@@ -88,19 +102,78 @@ class StationSession:
 
     # ---- plumbing -------------------------------------------------------------------------------------------
 
+    @property
+    def ws(self) -> web.WebSocketResponse:
+        """The newest connection: target of server-initiated messages."""
+        return self._sockets[-1]
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def socket_count(self) -> int:
+        return len(self._sockets)
+
+    def attach(self, ws: web.WebSocketResponse) -> None:
+        """Another connection of the same station: the session and its turns stay, new messages go here."""
+        self._sockets.append(ws)
+        while len(self._sockets) > MAX_SOCKETS:
+            stale = self._sockets.pop(0)
+            self.hub.track(asyncio.create_task(stale.close()))
+
+    def detach(self, ws: web.WebSocketResponse) -> bool:
+        """Forget a closed connection; True when it was the last one."""
+        if ws in self._sockets:
+            self._sockets.remove(ws)
+        return not self._sockets
+
     async def run(self) -> None:
-        async for msg in self.ws:
+        await self.read(self.ws)
+
+    async def read(self, ws: web.WebSocketResponse) -> None:
+        async for msg in ws:
             if msg.type.name != "BINARY":
                 continue
             data: bytes = msg.data
             try:
                 if aapi.is_aapi(data):
-                    await self._on_message(aapi.parse_client(data))
+                    message = aapi.parse_client(data)
+                    self._remember_origin(message, ws)
+                    await self._on_message(message)
                 else:
                     stream_id, payload = aapi.split_stream_frame(data)
                     await self._on_audio(stream_id, payload)
             except Exception:
                 _LOGGER.exception("[%s] failed to handle frame", self.station.device_id)
+
+    def _remember(self, key: str, ws: web.WebSocketResponse) -> None:
+        if not key:
+            return
+        self._origin[key] = ws
+        self._origin.move_to_end(key)
+        while len(self._origin) > ORIGIN_MEMORY:
+            self._origin.popitem(last=False)
+
+    def _remember_origin(self, msg: Any, ws: web.WebSocketResponse) -> None:
+        if msg.WhichOneof("Message") == "Event":
+            self._remember(msg.Event.Header.MessageId, ws)
+            if msg.Event.Header.StreamId:
+                self._remember(f"stream:{msg.Event.Header.StreamId}", ws)
+
+    def _target(self, msg: Any) -> web.WebSocketResponse:
+        """Where a message to the station goes: the connection of the request it answers, else the newest."""
+        target = None
+        if msg.WhichOneof("Message") == "Event":
+            header = msg.Event.Header
+            target = self._origin.get(header.RefMessageId)
+            if target is not None and header.StreamId:  # our TTS stream follows its reply
+                self._remember(f"stream:{header.StreamId}", target)
+        elif msg.WhichOneof("Message") == "StreamControl":
+            target = self._origin.get(f"stream:{msg.StreamControl.StreamId}")
+        if target is None or target.closed or target not in self._sockets:
+            return self.ws
+        return target
 
     async def close(self) -> None:
         self._closed = True
@@ -108,18 +181,24 @@ class StationSession:
             self._finish(turn, emit_stop="disconnected")
 
     async def _send(self, msg: Any) -> None:
-        await self._send_raw(aapi.encode(msg))
+        await self._send_raw(aapi.encode(msg), self._target(msg))
 
-    async def _send_raw(self, data: bytes) -> None:
-        if self._closed or self.ws.closed:
+    async def _send_stream(self, stream_id: int, chunk: bytes) -> None:
+        target = self._origin.get(f"stream:{stream_id}")
+        if target is None or target.closed or target not in self._sockets:
+            target = self.ws
+        await self._send_raw(aapi.make_stream_frame(stream_id, chunk), target)
+
+    async def _send_raw(self, data: bytes, ws: web.WebSocketResponse | None = None) -> None:
+        ws = ws or self.ws
+        if self._closed or ws.closed:
             return
         async with self._send_lock:
             try:
-                await self.ws.send_bytes(data)
+                await ws.send_bytes(data)
             except ConnectionResetError:
-                # The station dropped the socket (network glitch, maind restart): the session ends anyway.
+                # That connection is going away (network glitch, maind restart); others may still be open.
                 _LOGGER.debug("[%s] send on closing connection dropped", self.station.device_id)
-                self._closed = True
 
     def _spawn(self, turn: Turn | None, coro: Awaitable, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -180,7 +259,12 @@ class StationSession:
         self._turns[turn.turn_id] = turn
         self._voice = turn
         await self._send(aapi.input_start_ack(turn.message_id))
-        wake_word = vi.SpotterPhrase.capitalize() if vi.Request.ActivationType == "spotter" else None
+        wake_word = None
+        if vi.Request.ActivationType == "spotter":
+            # Some activations come with an empty SpotterPhrase; HA then saw "" and rejected repeats as
+            # "Duplicate wake-up detected for ". Fall back to the configured wake word.
+            phrase = (vi.SpotterPhrase or "").strip() or WAKE_WORDS.get(self.station.wake_word, "")
+            wake_word = phrase.capitalize() or None
         _LOGGER.info(
             "[%s] voice turn %s (activation=%s)", self.station.device_id, turn.turn_id,
             vi.Request.ActivationType or "?",
@@ -419,7 +503,7 @@ class StationSession:
         try:
             await self._send(aapi.tts_speak(turn.message_id, stream_id))
             async for chunk in transcoder.chunks():
-                await self._send_raw(aapi.make_stream_frame(stream_id, chunk))
+                await self._send_stream(stream_id, chunk)
         except Exception as err:  # noqa: BLE001 - report to HA, never break the session
             _LOGGER.warning("[%s] TTS streaming failed: %s", self.station.device_id, err)
             error = str(err)

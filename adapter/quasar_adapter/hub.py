@@ -123,6 +123,15 @@ class Hub:
             self.track(asyncio.create_task(self._start_sendspin(player)))
         return station
 
+    def station_reconnected(self, session: StationSession, platform: str, firmware: str, ip: str | None) -> None:
+        """Another connection of an already connected station (StationSession.attach)."""
+        station = session.station
+        station.platform = platform or station.platform
+        station.firmware = firmware or station.firmware
+        if ip and ip != station.state.ip:
+            station.state.ip = ip
+            self.emit_state(station)
+
     async def _start_sendspin(self, player: SendspinPlayer) -> None:
         try:
             await player.start()

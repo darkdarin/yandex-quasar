@@ -40,20 +40,29 @@ async def handle_uniproxy(request: web.Request) -> web.StreamResponse:
         raise web.HTTPBadRequest(text="X-UPRX-DEVICE-ID required")
     ws = web.WebSocketResponse(compress=False, max_msg_size=0, heartbeat=30)
     await ws.prepare(request)
-    session = StationSession(hub, hub.get_station(device_id), ws)
-    hub.station_connected(
-        session,
-        platform=request.headers.get("X-UPRX-DEVICE-MODEL", ""),
-        firmware=request.headers.get("X-UPRX-FIRMWARE", ""),
-        ip=request.remote,
-    )
-    _LOGGER.info("Station %s connected from %s", device_id, request.remote)
+    platform = request.headers.get("X-UPRX-DEVICE-MODEL", "")
+    firmware = request.headers.get("X-UPRX-FIRMWARE", "")
+    priority = request.headers.get("X-UPRX-CONNECTION-PRIORITY", "?")
+    session = hub.sessions.get(device_id)
+    if session is not None and not session.closed:
+        # The station opens another connection while the old one is alive (also mid-turn): keep the session.
+        session.attach(ws)
+        hub.station_reconnected(session, platform, firmware, request.remote)
+        _LOGGER.info("Station %s opened connection #%d from %s (priority %s)", device_id, session.socket_count,
+                     request.remote, priority)
+    else:
+        session = StationSession(hub, hub.get_station(device_id), ws)
+        hub.station_connected(session, platform=platform, firmware=firmware, ip=request.remote)
+        _LOGGER.info("Station %s connected from %s (priority %s)", device_id, request.remote, priority)
     try:
-        await session.run()
+        await session.read(ws)
     finally:
-        await session.close()
-        hub.station_disconnected(session)
-        _LOGGER.info("Station %s disconnected", device_id)
+        if session.detach(ws):
+            await session.close()
+            hub.station_disconnected(session)
+            _LOGGER.info("Station %s disconnected", device_id)
+        else:
+            _LOGGER.info("Station %s closed a connection, %d left", device_id, session.socket_count)
     return ws
 
 
