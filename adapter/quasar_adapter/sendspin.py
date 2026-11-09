@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
 import json
 import logging
@@ -38,6 +39,11 @@ PCM_FORMATS = [
 ]
 # ~20 s of 48 kHz stereo PCM: MA sends ahead at most this much.
 BUFFER_CAPACITY = 4_000_000
+# PCM waiting for ffmpeg while the station does not read the stream (a stalled HTTP connection): beyond this the
+# oldest audio is dropped, so a station that stopped listening cannot grow the adapter's memory until it is killed.
+MAX_QUEUED = BUFFER_CAPACITY
+# A station that takes no audio for this long has stalled: its HTTP request stops holding the stream.
+WRITE_TIMEOUT_S = 15.0
 MEDIA_COMMANDS = {
     "pause": MediaCommand.PAUSE, "resume": MediaCommand.PLAY, "stop": MediaCommand.STOP,
     "next": MediaCommand.NEXT, "previous": MediaCommand.PREVIOUS,
@@ -45,17 +51,22 @@ MEDIA_COMMANDS = {
 
 
 class _Encoder:
-    """PCM in, endless MP3 out (ffmpeg). One HTTP reader at a time."""
+    """PCM in, endless MP3 out (ffmpeg). One HTTP reader at a time; PCM waiting for ffmpeg is bounded."""
 
-    def __init__(self, ffmpeg: str, sample_rate: int, channels: int) -> None:
+    def __init__(self, ffmpeg: str, sample_rate: int, channels: int, max_queued: int = MAX_QUEUED) -> None:
         self._args = [
             ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
             "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels), "-i", "pipe:0",
             "-c:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "-flush_packets", "1", "pipe:1",
         ]
         self._proc: asyncio.subprocess.Process | None = None
-        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._chunks: collections.deque[bytes] = collections.deque()
+        self._queued = 0
+        self._max_queued = max_queued
+        self._ready = asyncio.Event()
+        self._closed = False
         self._writer: asyncio.Task | None = None
+        self.dropped = 0  # bytes of PCM dropped because nobody read the stream
 
     async def start(self) -> None:
         self._proc = await asyncio.create_subprocess_exec(
@@ -65,12 +76,27 @@ class _Encoder:
         self._writer = asyncio.create_task(self._write_loop())
 
     def feed(self, pcm: bytes) -> None:
-        self._queue.put_nowait(pcm)
+        self._chunks.append(pcm)
+        self._queued += len(pcm)
+        while self._queued > self._max_queued and len(self._chunks) > 1:
+            old = self._chunks.popleft()  # keep the newest audio: the station is not listening anyway
+            self._queued -= len(old)
+            if not self.dropped:
+                _LOGGER.warning("Sendspin stream is not read: dropping audio")
+            self.dropped += len(old)
+        self._ready.set()
 
     async def _write_loop(self) -> None:
         assert self._proc and self._proc.stdin
         try:
-            while (chunk := await self._queue.get()) is not None:
+            while True:
+                while not self._chunks:
+                    if self._closed:
+                        return
+                    self._ready.clear()
+                    await self._ready.wait()
+                chunk = self._chunks.popleft()
+                self._queued -= len(chunk)
                 self._proc.stdin.write(chunk)
                 await self._proc.stdin.drain()  # backpressure: the station reads in real time
         except (ConnectionResetError, BrokenPipeError):
@@ -84,7 +110,8 @@ class _Encoder:
         return await self._proc.stdout.read(size)
 
     async def stop(self) -> None:
-        self._queue.put_nowait(None)
+        self._closed = True
+        self._ready.set()
         if self._proc and self._proc.returncode is None:
             self._proc.kill()
             await self._proc.wait()
@@ -105,6 +132,7 @@ class SendspinPlayer:
         self._token: str | None = None
         self._metadata: dict[str, Any] = {}
         self._reported: tuple[int, bool] | None = None
+        self._serving: asyncio.Task | None = None  # the HTTP request the station reads the stream with
         self.active = False  # MA is streaming to this station right now
 
     # ---- lifecycle ------------------------------------------------------------------------------------------
@@ -237,14 +265,28 @@ class SendspinPlayer:
     async def serve(self, request: web.Request, token: str) -> web.StreamResponse:
         if token != self._token or self._encoder is None:
             raise web.HTTPNotFound()
+        # The station asks again after a network hiccup while its old request may still hang: the new request
+        # takes the stream over (the encoder has one output, two readers cannot share it).
+        task = asyncio.current_task()
+        previous, self._serving = self._serving, task
+        if previous is not None and previous is not task and not previous.done():
+            _LOGGER.info("[%s] the station asked for the stream again: dropping its old request",
+                         self.station.device_id)
+            previous.cancel()
+            await asyncio.wait({previous}, timeout=2)
         encoder = self._encoder
         response = web.StreamResponse(headers={"Content-Type": "audio/mpeg", "Cache-Control": "no-cache"})
         await response.prepare(request)
         try:
-            while encoder is self._encoder and (data := await encoder.read()):
-                await response.write(data)
+            while encoder is self._encoder and self._serving is task and (data := await encoder.read()):
+                await asyncio.wait_for(response.write(data), WRITE_TIMEOUT_S)
+        except TimeoutError:
+            _LOGGER.warning("[%s] the station stopped reading the stream", self.station.device_id)
         except (ConnectionResetError, asyncio.CancelledError):
             pass
+        finally:
+            if self._serving is task:
+                self._serving = None
         return response
 
     # ---- metadata, commands, volume -------------------------------------------------------------------------

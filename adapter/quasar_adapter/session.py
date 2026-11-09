@@ -241,7 +241,17 @@ class StationSession:
 
     def _update_device_state(self, request: Any) -> None:
         state = aapi.parse_device_state(request.DeviceStateRaw)
+        player = self.station.state.player
+        was_streaming = player.source == "sendspin" and player.state == "playing"
         if state is not None and self.station.apply_device_state(state):
+            if was_streaming and player.source == "sendspin" and player.state in ("idle", "paused"):
+                # The station stopped Music Assistant's stream by itself (its own stop, a lost stream) and said so
+                # only in its device state: pause MA's queue too, or MA keeps "playing" into a dead stream and starts
+                # the music again when the station reconnects.
+                _LOGGER.info("[%s] station stopped the Sendspin stream: pausing Music Assistant",
+                             self.station.device_id)
+                player.state = "paused"
+                self._spawn(None, self._pause_sendspin_queue(), "sendspin-pause")
             self.hub.emit_state(self.station)
 
     async def _on_voice_input(self, event: Any) -> None:
