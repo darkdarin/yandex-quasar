@@ -40,6 +40,10 @@ SUPPORTED_PLATFORMS = {"cucumber": "Яндекс Станция Миди", "plum
 CONNECT_TIMEOUT = 15
 RECONNECT_TIMEOUT = 240  # the station re-dials uniproxy with a backoff of up to ~2 min
 RECONNECT_SETTLE = 3  # let the old connection drop before looking for a new one
+LAUNCHER_PID = "pidof quasar_launcher2"
+RESTART_CHECK = 30  # q restart: ~5 s to stop, ~1 s to start; a new launcher pid means it worked
+RESTART_POLL = 2
+REBOOT_CALL_TIMEOUT = 10
 
 
 class ProvisionError(Exception):
@@ -261,10 +265,31 @@ class Provisioner:
         if rc:
             raise ProvisionError("station_error", f"cannot install quasar.cfg: {out.strip()[:200]}")
 
-    @staticmethod
-    async def _restart_quasar(shell: StationShell) -> None:
-        # Detached: the restart takes a few seconds and must not depend on our shell staying open.
-        await shell.run(f"(sleep 1; {QUASAR_DIR}/q restart) >/dev/null 2>&1 &")
+    async def _restart_quasar(self, shell: StationShell) -> None:
+        """Restart quasar so it re-reads quasar.cfg; reboot the station if quasar did not come back."""
+        _rc, before = await shell.run(LAUNCHER_PID)
+        # The restart takes several seconds and must outlive our shell. adbd kills everything left in its session
+        # when the shell closes, nohup and setsid included; start-stop-daemon -b escapes it. A plain background job
+        # is the fallback for stations without it: that one survives only over SSH.
+        restart = f"sleep 1; {QUASAR_DIR}/q restart"
+        await shell.run(
+            f"if command -v start-stop-daemon >/dev/null 2>&1; "
+            f"then start-stop-daemon -S -b -x /bin/sh -- -c {shlex.quote(restart)}; "
+            f"else ({restart}) >/dev/null 2>&1 & fi"
+        )
+        deadline = time.monotonic() + RESTART_CHECK
+        while time.monotonic() < deadline:
+            await asyncio.sleep(RESTART_POLL)
+            _rc, now = await shell.run(LAUNCHER_PID)
+            if now.strip() and now.strip() != before.strip():
+                self._step("quasar перезапущен")
+                return
+        self._step("quasar не перезапустился, станция перезагружается")
+        try:
+            # reboot takes adbd/dropbear down with it: the call may hang or fail, and that is fine.
+            await asyncio.wait_for(shell.run("reboot"), REBOOT_CALL_TIMEOUT)
+        except Exception as err:  # noqa: BLE001 - the transport breaks while the station goes down
+            _LOGGER.debug("[provision %s] reboot call ended with %r", self.host, err)
 
     def _save_seeds(self, devices_raw: bytes, user_config_raw: bytes) -> None:
         backend = self.hub.backend

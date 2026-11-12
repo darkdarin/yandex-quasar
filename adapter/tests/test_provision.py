@@ -30,6 +30,8 @@ class FakeShell:
         self.files = files
         self.commands: list[str] = []
         self.on_restart = lambda: None
+        self.restart_works = True  # False: the restart dies with the shell, as it did over ADB before
+        self.launcher_pid = 100
 
     async def run(self, command: str) -> tuple[int, str]:
         self.commands.append(command)
@@ -37,7 +39,13 @@ class FakeShell:
             return 0, "DEV1\n"
         if "version_full" in command:
             return 0, "0.369.1.50\n"
-        if "q restart" in command:
+        if "q restart" in command and self.restart_works:
+            self.launcher_pid += 1
+            self.on_restart()
+        if command == provision.LAUNCHER_PID:
+            return 0, f"{self.launcher_pid}\n"
+        if command == "reboot":
+            self.launcher_pid += 1
             self.on_restart()
         if command.startswith("cmp -s"):  # install script: emulate cp
             self.files[CFG_PATH] = self.files[provision.CFG_UPLOAD]
@@ -95,6 +103,8 @@ def shell(monkeypatch):
     monkeypatch.setattr(Provisioner, "_open", open_)
     monkeypatch.setattr(provision, "RECONNECT_SETTLE", 0)
     monkeypatch.setattr(provision, "RECONNECT_TIMEOUT", 0.5)
+    monkeypatch.setattr(provision, "RESTART_CHECK", 0.05)
+    monkeypatch.setattr(provision, "RESTART_POLL", 0.01)
     return fake
 
 
@@ -134,6 +144,16 @@ async def test_provision_rolls_back_when_station_does_not_return(hub, shell):
     assert err.value.code == "timeout"
     assert json.loads(shell.files[CFG_PATH]) == FACTORY_CFG
     assert sum("q restart" in c for c in shell.commands) == 2
+    assert all("start-stop-daemon -S -b" in c for c in shell.commands if "q restart" in c)
+    assert "reboot" not in shell.commands  # quasar itself restarted both times
+
+
+async def test_station_reboots_when_quasar_does_not_restart(hub, shell):
+    shell.restart_works = False
+    shell.on_restart = lambda: hub.sessions.__setitem__("DEV1", object())
+    result = await Provisioner(hub, {"method": "adb", "host": "10.0.0.9", "mode": "voice"}).provision()
+    assert shell.commands.count("reboot") == 1
+    assert "quasar не перезапустился, станция перезагружается" in result["steps"]
 
 
 async def test_unsupported_model_is_refused(hub, shell):

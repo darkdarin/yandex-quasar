@@ -39,8 +39,9 @@ CONF_METHOD = "method"
 CONF_PRIVATE_KEY = "private_key"
 CONF_MODE = "mode"
 CONF_ALLOW_UNTESTED = "allow_untested"
-# The adapter waits up to 4 min for the station to come back after a quasar restart.
-SETUP_TIMEOUT = 330
+# The adapter checks the quasar restart for up to 30 s (rebooting the station if it did not happen), waits up to
+# 4 min for the station to come back and may then roll back with another restart check.
+SETUP_TIMEOUT = 420
 KNOWN_ERRORS = {"station_unreachable", "auth_failed", "unsupported", "timeout", "station_error", "busy", "no_backup"}
 
 
