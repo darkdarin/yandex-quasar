@@ -1141,7 +1141,7 @@ wheels = [
 
 [[package]]
 name = "quasar-adapter"
-version = "0.2.19"
+version = "0.2.20"
 source = { editable = "." }
 dependencies = [
     { name = "adb-shell", extra = ["async"] },
