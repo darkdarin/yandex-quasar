@@ -51,7 +51,7 @@
           "username": "SSH only.",
           "password": "SSH only. Empty means an empty root password, as on most rooted stations.",
           "private_key": "SSH only, optional: OpenSSH key.",
-          "allow_untested": "Only Yandex Station Midi has been tested. Other models may misbehave."
+          "allow_untested": "Only Yandex Station Midi and Lite 2 have been tested. Other models may misbehave."
         }
       }
     },
@@ -161,7 +161,7 @@
           "username": "SSH only.",
           "password": "SSH only. Empty means an empty root password, as on most rooted stations.",
           "private_key": "SSH only, optional: OpenSSH key.",
-          "allow_untested": "Only Yandex Station Midi has been tested. Other models may misbehave."
+          "allow_untested": "Only Yandex Station Midi and Lite 2 have been tested. Other models may misbehave."
         }
       },
       "restore": {

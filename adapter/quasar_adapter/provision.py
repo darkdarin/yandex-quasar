@@ -35,7 +35,7 @@ USER_CONFIG = "/data/quasar/data/user_config.dat"
 SEED_TMP = "/tmp/quasar_adapter_seed"
 
 # Models whose quasar.cfg layout has been checked on a real device (deviceType from quasar.cfg).
-SUPPORTED_PLATFORMS = {"cucumber": "Яндекс Станция Миди"}
+SUPPORTED_PLATFORMS = {"cucumber": "Яндекс Станция Миди", "plum": "Яндекс Станция Лайт 2"}
 
 CONNECT_TIMEOUT = 15
 RECONNECT_TIMEOUT = 240  # the station re-dials uniproxy with a backoff of up to ~2 min
