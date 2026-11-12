@@ -629,11 +629,15 @@ class StationSession:
         await self._cmd_media_play({"url": url, "metadata": metadata, "resolve": False, "source": source})
 
     async def stop_stream(self) -> None:
-        await self._push(aapi.directive("player_pause", {"smooth": True}))
         player = self.station.state.player
+        player.stream_id = None  # its "stopped" callback is ours, not the station's own pause
+        await self._push(aapi.AUDIO_STOP)
         player.state = "idle"
-        player.stream_id = None
         self.hub.emit_state(self.station)
+
+    def _halt(self) -> dict:
+        """What stops the current playback: audio_stop for ours (audio_play), player_pause for the station's own."""
+        return aapi.AUDIO_STOP if self.station.state.player.stream_id else aapi.PLAYER_PAUSE
 
     async def _route_to_sendspin(self, name: str) -> bool:
         """While Music Assistant streams over Sendspin, playback control belongs to MA's queue."""
@@ -725,7 +729,7 @@ class StationSession:
             return {}
         player = self.station.state.player
         position = self._current_position()
-        await self._push(aapi.directive("player_pause", {"smooth": True}))
+        await self._push(self._halt())
         player.state = "paused"
         player.position = position
         player.position_ts = time.time()
@@ -749,7 +753,7 @@ class StationSession:
     async def _cmd_media_stop(self, data: dict) -> dict:
         if await self._route_to_sendspin("stop"):
             return {}
-        await self._push(aapi.directive("player_pause", {"smooth": False}))
+        await self._push(self._halt())
         player = self.station.state.player
         player.state = "idle"
         player.url = None

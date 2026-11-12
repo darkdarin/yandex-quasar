@@ -281,6 +281,20 @@ async def test_native_timer(station, ha):
     assert (await ha.request("timer.cancel", DEVICE_ID, {}))["error"]["code"] == "invalid"
 
 
+async def test_pause_and_stop_halt_our_stream_at_once(station, ha):
+    """player_pause does not stop audio_play on the station's firmware: our stream gets audio_stop."""
+    assert (await ha.request("media.play", DEVICE_ID, {"url": "http://x/s.mp3", "resolve": False}))["ok"]
+    assert (await station.expect_event("Push")).Event.Push.Directives[0].Name == "audio_play"
+    assert (await ha.request("media.pause", DEVICE_ID, {}))["ok"]
+    d = (await station.expect_event("Push")).Event.Push.Directives[0]
+    assert d.Name == "audio_stop" and MessageToDict(d.Payload) == {"smooth": False}
+    assert (await ha.request("media.stop", DEVICE_ID, {}))["ok"]
+    assert (await station.expect_event("Push")).Event.Push.Directives[0].Name == "audio_stop"
+    # nothing of ours plays now: the station's own music is paused
+    assert (await ha.request("media.stop", DEVICE_ID, {}))["ok"]
+    assert (await station.expect_event("Push")).Event.Push.Directives[0].Name == "player_pause"
+
+
 async def test_offline_station(ha):
     reply = await ha.request("media.pause", "NOPE", {})
     assert reply["error"]["code"] == "station_offline"

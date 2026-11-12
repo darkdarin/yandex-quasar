@@ -181,6 +181,10 @@ def fill_directive(target: Any, spec: dict) -> None:
 
 
 TTS_PLACEHOLDER = directive("tts_play_placeholder", {"channel": "Dialog"}, led_silent=True)
+# Stops what audio_play started, at once. player_pause does not stop it on this firmware (tested on a Midi,
+# 2026-11-12): the station plays on until its buffer runs out. player_pause is for the station's own music.
+AUDIO_STOP = directive("audio_stop", {"smooth": False})
+PLAYER_PAUSE = directive("player_pause", {"smooth": True})
 
 # ---- native timers and alarms (typed directives, NAlice.TAlarmCapability) ----------------------------------------
 
