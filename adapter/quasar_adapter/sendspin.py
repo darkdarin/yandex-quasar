@@ -227,6 +227,10 @@ class SendspinPlayer:
         self._spawn(self._start_stream())
 
     async def _start_stream(self) -> None:
+        if self.active and (session := self.hub.sessions.get(self.station.device_id)):
+            # A new track or a seek replaces the stream: stopping the old one makes the station report
+            # it stopped before the new one plays, which must not read as the person's pause.
+            session.forget_stream()
         await self._stop_stream(pause_station=False)
         self._encoder = _Encoder(self.hub.config.ffmpeg, *self._format)
         await self._encoder.start()

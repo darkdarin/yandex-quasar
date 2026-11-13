@@ -101,3 +101,45 @@ async def test_station_stopping_the_stream_by_itself_pauses_music_assistant(adap
         await asyncio.sleep(0.05)
     assert commands == ["pause"]
     assert player.state == "paused"
+
+
+async def test_a_new_track_is_not_taken_for_the_persons_pause(adapter, station, ha, monkeypatch):
+    """Next track: Music Assistant restarts the stream; the station reports the old one stopped
+    before the new one plays. That stop is ours, so Music Assistant must not be paused."""
+    server, _ = adapter
+    hub = server.app[HUB_KEY]
+    commands: list[str] = []
+    played: list[str] = []
+
+    class Encoder:
+        def __init__(self, *args) -> None:
+            pass
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    async def group_command(name: str) -> None:
+        commands.append(name)
+
+    monkeypatch.setattr("quasar_adapter.sendspin._Encoder", Encoder)
+    bridge = SendspinPlayer(hub, hub.stations[DEVICE_ID], 0)
+    monkeypatch.setattr(bridge, "group_command", group_command)
+    hub.sendspin[DEVICE_ID] = bridge
+    session = hub.sessions[DEVICE_ID]
+
+    async def play_stream(url: str, metadata: dict, source: str) -> None:
+        played.append(url)  # the station has not taken the new stream yet
+
+    monkeypatch.setattr(session, "play_stream", play_stream)
+    player = hub.stations[DEVICE_ID].state.player
+    player.state, player.source, player.stream_id = "playing", "sendspin", "s1"
+    bridge.active, bridge._encoder = True, Encoder()
+
+    await bridge._start_stream()  # Music Assistant skipped to the next track
+    await station.send(station.text_input_server_action("m1", "qa_media_stopped", {"stream_id": "s1"}))
+    await asyncio.sleep(0.3)
+    assert played and commands == []
+    assert player.state != "paused"

@@ -628,6 +628,10 @@ class StationSession:
         """Play an adapter-served live stream (Sendspin bridge); our own URL needs no redirect probing."""
         await self._cmd_media_play({"url": url, "metadata": metadata, "resolve": False, "source": source})
 
+    def forget_stream(self) -> None:
+        """We stop the current stream ourselves (to replace it): its "stopped" callback is ours."""
+        self.station.state.player.stream_id = None
+
     async def stop_stream(self) -> None:
         player = self.station.state.player
         player.stream_id = None  # its "stopped" callback is ours, not the station's own pause
