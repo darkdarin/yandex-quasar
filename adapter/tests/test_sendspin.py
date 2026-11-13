@@ -143,3 +143,33 @@ async def test_a_new_track_is_not_taken_for_the_persons_pause(adapter, station, 
     await asyncio.sleep(0.3)
     assert played and commands == []
     assert player.state != "paused"
+
+
+async def test_music_assistant_ending_the_stream_is_not_taken_for_the_persons_pause(adapter, station, ha):
+    """Next track: Music Assistant ends the stream; the adapter stops the station, and the station
+    reports the stop, without the stream's id. That stop is ours: Music Assistant goes on to the
+    next track instead of being paused."""
+    server, _ = adapter
+    hub = server.app[HUB_KEY]
+    commands: list[str] = []
+
+    async def group_command(name: str) -> None:
+        commands.append(name)
+
+    bridge = SendspinPlayer(hub, hub.stations[DEVICE_ID], 0)
+    bridge.group_command = group_command  # type: ignore[method-assign]
+    hub.sendspin[DEVICE_ID] = bridge
+    player = hub.stations[DEVICE_ID].state.player
+    player.state, player.source, player.stream_id = "playing", "sendspin", "s1"
+    bridge.active = True
+
+    bridge._on_stream_end(None)
+    for _ in range(50):
+        if player.stream_id is None:
+            break
+        await asyncio.sleep(0.02)
+    for payload in ({}, {"stream_id": "s1"}):
+        await station.send(station.text_input_server_action("m1", "qa_media_stopped", payload))
+    await asyncio.sleep(0.3)
+    assert commands == []
+    assert player.state == "idle"

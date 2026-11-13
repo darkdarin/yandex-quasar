@@ -700,8 +700,10 @@ class StationSession:
 
     def _on_media_callback(self, event: str, payload: dict) -> None:
         player = self.station.state.player
-        if payload.get("stream_id") != player.stream_id:
-            return  # callback of a replaced track
+        if player.stream_id is None or payload.get("stream_id") != player.stream_id:
+            # a replaced track, or a stream we stopped ourselves (it forgot its id first): a callback
+            # without an id must not match a forgotten one, or our own stop reads as the person's pause
+            return
         if event == "started":
             player.state = "playing"
         elif event == "stopped" and player.source == "sendspin":
