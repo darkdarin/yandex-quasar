@@ -72,6 +72,9 @@ class Station:
     # Start the stream well before the end of the wake word (spotterSubscribePointShiftMs) so HA gets it whole.
     include_wake_word: bool = False
     state: StationState = field(default_factory=StationState)
+    # streams the adapter stopped itself (to replace or end them): what the station reports about them
+    # afterwards is the stop we made, not the person's pause
+    stopped_streams: list[str] = field(default_factory=list)
 
     @property
     def display_name(self) -> str:
@@ -97,6 +100,13 @@ class Station:
             "state": self.state.as_dict(),
         }
 
+    def forget_stream(self) -> None:
+        """The adapter stops the current stream itself: what comes about it later is not news."""
+        player = self.state.player
+        if player.stream_id:
+            self.stopped_streams = [*self.stopped_streams, player.stream_id][-8:]
+        player.stream_id = None
+
     def apply_device_state(self, ds: Any) -> bool:
         """Update from a TDeviceState protobuf; return True when something HA cares about changed."""
         before = self.state.as_dict()
@@ -105,8 +115,10 @@ class Station:
         self.state.muted = ds.SoundMuted
         self.state.mic_muted = ds.MicsMuted
         stream_id = ds.AudioPlayer.CurrentlyPlaying.StreamId if ds.HasField("AudioPlayer") else ""
-        # Callbacks of a replaced track carry the old track's state: never apply it to the current one.
-        if stream_id and self.state.player.stream_id and stream_id != self.state.player.stream_id:
+        # Callbacks of a replaced track carry the old track's state: never apply it to the current one,
+        # nor that of a stream we stopped (its "Paused" is our stop, and its id must not come back).
+        replaced = self.state.player.stream_id and stream_id != self.state.player.stream_id
+        if stream_id and (replaced or stream_id in self.stopped_streams):
             return before != self.state.as_dict()
         if ds.HasField("AudioPlayer"):
             ap = ds.AudioPlayer

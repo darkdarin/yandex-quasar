@@ -146,9 +146,10 @@ async def test_a_new_track_is_not_taken_for_the_persons_pause(adapter, station, 
 
 
 async def test_music_assistant_ending_the_stream_is_not_taken_for_the_persons_pause(adapter, station, ha):
-    """Next track: Music Assistant ends the stream; the adapter stops the station, and the station
-    reports the stop, without the stream's id. That stop is ours: Music Assistant goes on to the
-    next track instead of being paused."""
+    """Next track: Music Assistant ends the stream and starts the next one; the adapter stops the
+    station, which reports the stop without the stream's id, and its device state still names the
+    stopped stream as "Paused". That stop is ours: Music Assistant must not be paused (it would drop
+    its Sendspin output and never start the next track), nor may the stopped stream come back."""
     server, _ = adapter
     hub = server.app[HUB_KEY]
     commands: list[str] = []
@@ -168,8 +169,50 @@ async def test_music_assistant_ending_the_stream_is_not_taken_for_the_persons_pa
         if player.stream_id is None:
             break
         await asyncio.sleep(0.02)
-    for payload in ({}, {"stream_id": "s1"}):
-        await station.send(station.text_input_server_action("m1", "qa_media_stopped", payload))
+    paused = aapi.TDeviceState()
+    paused.AudioPlayer.PlayerState = paused.AudioPlayer.DESCRIPTOR.fields_by_name["PlayerState"].enum_type \
+        .values_by_name["Paused"].number
+    paused.AudioPlayer.CurrentlyPlaying.StreamId = "s1"
+    for i, payload in enumerate(({}, {"stream_id": "s1"})):
+        msg = station.text_input_server_action(f"m{i}", "qa_media_stopped", payload)
+        msg.Event.TextInput.Request.DeviceStateRaw = paused.SerializeToString()
+        await station.send(msg)
     await asyncio.sleep(0.3)
     assert commands == []
-    assert player.state == "idle"
+    assert player.state == "idle" and player.stream_id is None
+
+
+async def test_after_a_track_change_the_station_losing_the_new_stream_still_pauses_music_assistant(
+    adapter, station, ha
+):
+    """0.2.18 still holds after a track change: only the stream the adapter stopped is ignored; the
+    station stopping the current one by itself (a lost stream) pauses Music Assistant's queue."""
+    server, _ = adapter
+    hub = server.app[HUB_KEY]
+    commands: list[str] = []
+
+    async def group_command(name: str) -> None:
+        commands.append(name)
+
+    async def stop() -> None:
+        return None
+
+    hub.sendspin[DEVICE_ID] = SimpleNamespace(group_command=group_command, on_station_state=lambda: None, stop=stop)
+    st = hub.stations[DEVICE_ID]
+    player = st.state.player
+    player.state, player.source, player.stream_id = "playing", "sendspin", "s1"
+    st.forget_stream()  # the adapter replaced s1 with the next track's stream
+    player.stream_id, player.state = "s2", "playing"
+
+    lost = aapi.TDeviceState()
+    lost.AudioPlayer.PlayerState = lost.AudioPlayer.DESCRIPTOR.fields_by_name["PlayerState"].enum_type \
+        .values_by_name["Idle"].number
+    lost.AudioPlayer.CurrentlyPlaying.StreamId = "s2"
+    msg = station.text_input_server_action("m1", "some_action", {})
+    msg.Event.TextInput.Request.DeviceStateRaw = lost.SerializeToString()
+    await station.send(msg)
+    for _ in range(50):
+        if commands:
+            break
+        await asyncio.sleep(0.05)
+    assert commands == ["pause"] and player.state == "paused"

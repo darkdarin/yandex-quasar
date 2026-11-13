@@ -630,11 +630,11 @@ class StationSession:
 
     def forget_stream(self) -> None:
         """We stop the current stream ourselves (to replace it): its "stopped" callback is ours."""
-        self.station.state.player.stream_id = None
+        self.station.forget_stream()
 
     async def stop_stream(self) -> None:
         player = self.station.state.player
-        player.stream_id = None  # its "stopped" callback is ours, not the station's own pause
+        self.station.forget_stream()  # its "stopped" callback is ours, not the station's own pause
         await self._push(aapi.AUDIO_STOP)
         player.state = "idle"
         self.hub.emit_state(self.station)
@@ -764,7 +764,7 @@ class StationSession:
         player.state = "idle"
         player.url = None
         player.source = None
-        player.stream_id = None
+        self.station.forget_stream()
         player.position = 0.0
         self.hub.emit_state(self.station)
         return {}
