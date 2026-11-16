@@ -164,7 +164,8 @@ class Backend:
         if station := self.hub.stations.get(device_id):
             config.setdefault("account_config", {})["spotter"] = station.wake_word
         system = config.setdefault("system_config", {})
-        system["uniProxyUrl"] = self.uniproxy_url()
+        # This URL overrides uniProxyUrl from quasar.cfg once the station uses our backend.
+        system["uniProxyUrl"] = self.uniproxy_url(request)
         system["onlineSpotterEnabled"] = False
         if station is not None and station.include_wake_word:
             # Start the voice stream this far before the end of the wake word (firmware default: -80 ms).
@@ -193,8 +194,12 @@ class Backend:
     async def push_subscribe(self, request: web.Request) -> web.StreamResponse:
         return web.json_response({"status": "ok", "sign": secrets.token_hex(16), "ts": int(time.time())})
 
-    def uniproxy_url(self) -> str:
-        host = self.cfg.advertise_host or self.hub.local_ip
+    def uniproxy_url(self, request: web.Request | None = None) -> str:
+        if not self.cfg.advertise_host and request is not None and request.host:
+            # The station has just reached us at this host:port, so uniproxy is reachable there too, even when our
+            # own idea of the LAN address is wrong (several interfaces, Docker port mapping).
+            return f"ws://{request.host}/uni.ws"
+        host = self.hub.advertised_host(request.remote if request is not None else None)
         return f"ws://{host}:{self.cfg.port}/uni.ws"
 
     # ---- glagol ---------------------------------------------------------------------------------------------

@@ -239,7 +239,7 @@ class SendspinPlayer:
         session = self.hub.sessions.get(self.station.device_id)
         if session is None:
             return
-        url = f"http://{self.hub.config.advertise_host or self.hub.local_ip}:{self.hub.config.port}" \
+        url = f"http://{self.hub.advertised_host(self.station.state.ip)}:{self.hub.config.port}" \
               f"/sendspin/{self.station.device_id}/{self._token}.mp3"
         await session.play_stream(url, self._metadata, source="sendspin")
 

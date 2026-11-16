@@ -45,9 +45,24 @@ class Hub:
 
     @functools.cached_property
     def local_ip(self) -> str:
+        return self.local_ip_towards(None)
+
+    def local_ip_towards(self, peer: str | None) -> str:
+        """Our address on the route to ``peer`` (the default route without one).
+
+        On a host with several interfaces (a router, a Docker host) the default route can lead to the WAN or a bridge
+        while the station sits on another LAN: the address it can reach is the one on the route to it.
+        """
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("192.0.2.1", 9))  # no packets are sent for UDP connect
+            try:
+                sock.connect((peer or "192.0.2.1", 9))  # no packets are sent for UDP connect
+            except OSError:
+                sock.connect(("192.0.2.1", 9))
             return sock.getsockname()[0]
+
+    def advertised_host(self, peer: str | None = None) -> str:
+        """Host the station should use for the adapter: advertise_host, else our address on the route to it."""
+        return self.config.advertise_host or self.local_ip_towards(peer)
 
     async def start(self) -> None:
         self.http = aiohttp.ClientSession()

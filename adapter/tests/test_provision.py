@@ -85,6 +85,7 @@ def hub(tmp_path: Path):
     return SimpleNamespace(
         config=SimpleNamespace(advertise_host="", port=8080, data_dir=tmp_path),
         local_ip="192.168.0.50", sessions={}, backend=FakeBackend(),
+        advertised_host=lambda peer=None: "192.168.0.50",
     )
 
 

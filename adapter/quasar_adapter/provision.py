@@ -320,7 +320,7 @@ class Provisioner:
             await shell.run(f"rm -rf {SEED_TMP}")
 
     async def provision(self) -> dict:
-        host = self.hub.config.advertise_host or self.hub.local_ip
+        host = self.hub.advertised_host(self.host)
         port = self.hub.config.port
         shell = await self._open()
         try:

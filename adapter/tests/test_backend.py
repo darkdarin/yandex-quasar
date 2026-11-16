@@ -19,12 +19,12 @@ SEED_DEVICES = {"devices": [{"id": "DEV1", "platform": "cucumber",
                              "glagol": {"security": {"server_certificate": "CERT", "server_private_key": "KEY"}}}]}
 
 
-async def _server(tmp_path):
+async def _server(tmp_path, advertise_host="10.0.0.5"):
     seed = tmp_path / "seed"
     seed.mkdir()
     (seed / "sync_info_base.json").write_text(json.dumps(SEED_SYNC))
     (seed / "devices.json").write_text(json.dumps(SEED_DEVICES))
-    cfg = Config(data_dir=tmp_path / "data", api_token="t", seed_dir=str(seed), advertise_host="10.0.0.5",
+    cfg = Config(data_dir=tmp_path / "data", api_token="t", seed_dir=str(seed), advertise_host=advertise_host,
                  port=8080, account_uid="42")
     cfg.data_dir.mkdir()
     server = TestServer(build_app(cfg, zeroconf=False))
@@ -49,6 +49,18 @@ async def test_sync_info_points_to_adapter_and_blocks_ota(tmp_path):
             assert (await r.json())["hasUpdate"] is False
         async with http.post(server.make_url("/register?device_id=DEV1&platform=cucumber")) as r:
             assert (await r.json())["hasCriticalUpdate"] is False
+    await server.close()
+
+
+async def test_sync_info_uniproxy_follows_the_address_the_station_used(tmp_path):
+    # No advertise_host: our default-route address may be a WAN or Docker bridge one, so the station is sent to
+    # uniproxy at the host:port it has just reached the backend on (e.g. a Docker port mapping 8081 -> 8080).
+    server = await _server(tmp_path, advertise_host="")
+    async with aiohttp.ClientSession() as http:
+        url = server.make_url("/quasar/get_sync_info?device_id=DEV1")
+        async with http.get(url, headers={"Host": "192.168.50.1:8081"}) as r:
+            body = await r.json()
+    assert body["config"]["system_config"]["uniProxyUrl"] == "ws://192.168.50.1:8081/uni.ws"
     await server.close()
 
 
