@@ -165,6 +165,7 @@ cfg, _ = json.JSONDecoder().raw_decode(d[d.index('{'):]); json.dump(cfg, open('s
 |---|---|
 | `aliced.uniProxyUrl` | `ws://192.168.0.50:8080/uni.ws` (уже сделано на шаге 3) |
 | `common.backendUrl` | `http://192.168.0.50:8080/quasar` |
+| `common.robotBackendHost` | `192.168.0.50:8080` (только адрес и порт, без `http://`: по нему станция проверяет, есть ли интернет) |
 | `authd.passportUrl` | `http://192.168.0.50:8080/oauth` |
 | `authd.codeUrl` | `http://192.168.0.50:8080/passport` |
 | `authd.loginUrl` | `http://192.168.0.50:8080/login` |

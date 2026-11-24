@@ -182,6 +182,8 @@ def redirect_config(cfg: dict, host: str, port: int, full: bool) -> tuple[dict, 
     if not full:
         return new, changed
     put("common.backendUrl", f"{base}/quasar")
+    # Host of the station's connectivity check (HEAD http://<host>/generate_204); host:port is accepted.
+    put("common.robotBackendHost", f"{host}:{port}")
     put("authd.passportUrl", f"{base}/oauth")
     put("authd.codeUrl", f"{base}/passport")
     put("authd.loginUrl", f"{base}/login")

@@ -13,7 +13,8 @@ from quasar_adapter import provision
 from quasar_adapter.provision import CFG_PATH, Provisioner, ProvisionError, extract_user_config, redirect_config
 
 FACTORY_CFG = {
-    "common": {"deviceType": "cucumber", "backendUrl": "https://quasar.yandex.net"},
+    "common": {"deviceType": "cucumber", "backendUrl": "https://quasar.yandex.net",
+               "robotBackendHost": "scbh.yandex.net"},
     "aliced": {"uniProxyUrl": "wss://uniproxy.alice.yandex.net/uni.ws"},
     "authd": {"passportUrl": "https://oauth.yandex.ru", "codeUrl": "https://mobileproxy.passport.yandex.net",
               "loginUrl": "https://login.yandex.ru"},
@@ -113,6 +114,7 @@ def test_redirect_full_and_voice_only():
     new, changed = redirect_config(FACTORY_CFG, "10.0.0.2", 8080, full=True)
     assert new["aliced"]["uniProxyUrl"] == "ws://10.0.0.2:8080/uni.ws"
     assert new["common"]["backendUrl"] == "http://10.0.0.2:8080/quasar"
+    assert new["common"]["robotBackendHost"] == "10.0.0.2:8080"
     assert new["teleme3d"]["clickdaemon"]["endpointUri"] == "http://10.0.0.2:8080/clck/quasar_metrics/write/batch"
     assert new["ntpd"]["timeOverHttpUrl"] == "http://10.0.0.2:8080/scbh/generate_204"
     assert new["fluent-bitd"]["fluent-bit"]["enabled"] is False
