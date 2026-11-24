@@ -8,8 +8,8 @@
 - `adapter/` — **Quasar Adapter** (Python, asyncio/aiohttp). Эмулирует `quasar.yandex.net` и uniproxy для станции,
   отдаёт HA свой WebSocket API.
 - `custom_components/yandex_quasar/` — **HA custom integration** (`assist_satellite`, `media_player`, `sensor`,
-  `select`; позже `event`, `light`, `switch`).
-- `station-agent/` — опциональный агент на станции (Go): кнопки, LED, мьют.
+  `select`, `switch`; позже `event`, `light`).
+- `station-agent/` — в планах, в репозитории пока нет: опциональный агент на станции (Go) — кнопки, LED, мьют.
 - `ha-addon/` — упаковка адаптера как HA OS add-on (app). `README.md` и `DOCS.md` там — для пользователей
   (страница app в магазине и вкладка «Документация»); сборка и релиз описаны ниже.
 - `docker-compose.yml` — тот же образ app без Supervisor (HA в Docker): `run.sh` без `SUPERVISOR_TOKEN` берёт
@@ -101,12 +101,12 @@ cd "$(ha-addon/build.sh)" && docker build --platform linux/arm64 \
 
 | Что | Где / как |
 |---|---|
-| Станция (Midi) | `ssh alice` (192.168.1.25:2222, root). `uniProxyUrl` → `ws://192.168.0.50:8080/uni.ws`, бэкап — `/data/quasar.cfg.orig` |
+| Станция (Midi) | `ssh alice` (порт 2222, root). `uniProxyUrl` → `ws://192.168.0.50:8080/uni.ws`, бэкап — `/data/quasar.cfg.orig` |
 | Home Assistant OS (RPi 5) | `ssh ha` (192.168.0.50, Terminal & SSH add-on). API-токен — `main-ha.env` в корне (gitignored, в чат не выводить) |
 | Адаптер | app из магазина `7391c79f_quasar_adapter`, seed-файлы — `/addon_configs/7391c79f_quasar_adapter/` (в SSH-аддоне `/app_configs/…`). Dev-сборка — локальный app (см. [«Сборка app»](#сборка-app)) |
 | Интеграция | `tar -C custom_components -cf - yandex_quasar \| ssh ha 'tar -C /config/custom_components -xf -'`, затем `ssh ha 'ha core check && ha core restart'` |
 | Отладка Assist | WS `assist_pipeline/pipeline_debug/list|get` на основном HA; пайплайн «OpenAI» (облачный STT + агент) |
-| Тесты адаптера | `cd adapter && uv run pytest` |
+| Тесты адаптера | `cd adapter && uv run pytest` (на чистом checkout сначала `tools/gen_protos.sh`: `_proto/` не в репо) |
 
 Ограничения: HA на Raspberry Pi 5, поэтому тяжёлые локальные модели (Whisper turbo и т. п.) не предлагать.
 Перезапуск HA и правки на станции касаются живого дома: делать осознанно и сообщать.

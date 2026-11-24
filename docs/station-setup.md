@@ -13,12 +13,13 @@ adb pull /system/vendor/quasar/launch.json
 adb pull /data/quasar/devices.json   # секрет станции: никому не отправляйте и не публикуйте
 ```
 
-Бэкапы, которые создаются на самой станции по шагам README:
+Бэкапы, которые создаются на самой станции по шагам README или автонастройкой из HA:
 
 | Файл | Что в нём | Как вернуть |
 |---|---|---|
 | `/data/quasar.cfg.orig` | заводской `quasar.cfg` (до шага 3) | станция снова полностью работает с Яндексом |
-| `/data/quasar.cfg.uniproxy-only` | `quasar.cfg` после шага 3 | голос через HA, остальное в облаке |
+| `/data/quasar.cfg.uniproxy-only` | `quasar.cfg` после шага 3 (только при ручной настройке) | голос через HA, остальное в облаке |
+| `/data/quasar.cfg.prev` | `quasar.cfg` до последней автонастройки из HA | предыдущее состояние станции |
 | `/data/quasar-cloud-backup.tar` | авторизация и облачный конфиг станции | `cd /data/quasar && tar -xf /data/quasar-cloud-backup.tar` |
 
 Возврат любого `quasar.cfg`:
