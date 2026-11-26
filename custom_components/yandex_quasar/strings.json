@@ -166,7 +166,7 @@
       },
       "restore": {
         "title": "Return the station to Yandex",
-        "description": "The adapter restores the factory quasar.cfg from the backup on the station and restarts it. The station works with the Yandex cloud again.",
+        "description": "The adapter restores the factory quasar.cfg from the backup on the station, and after a full unbinding also the station's authorization and cloud config, then restarts it. The station works with the Yandex cloud again.",
         "data": {
           "host": "Station IP",
           "method": "Connection method",

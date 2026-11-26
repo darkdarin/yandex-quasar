@@ -1,6 +1,6 @@
 [project]
 name = "quasar-adapter"
-version = "0.2.26"
+version = "0.2.27"
 description = "Local Yandex Station backend (quasar/uniproxy emulation) bridging to Home Assistant"
 requires-python = ">=3.12"
 dependencies = [

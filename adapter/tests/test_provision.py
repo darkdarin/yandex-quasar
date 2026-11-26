@@ -50,6 +50,13 @@ class FakeShell:
             self.on_restart()
         if command.startswith("cmp -s"):  # install script: emulate cp
             self.files[CFG_PATH] = self.files[provision.CFG_UPLOAD]
+        if provision.ADAPTER_STATE in command:  # restore: save adapter-era files, unpack and retire the backup
+            if provision.CLOUD_BACKUP not in self.files:
+                return 1, "no backup"
+            self.files[provision.ADAPTER_STATE] = b"adapter state"
+            self.files[provision.USER_CONFIG] = self.files[provision.CLOUD_BACKUP]
+            self.files[provision.CLOUD_RESTORED] = self.files.pop(provision.CLOUD_BACKUP)
+            return 0, ""
         if "tar -xf" in command:  # cloud backup holds the original user_config.dat
             if provision.CLOUD_BACKUP not in self.files:
                 return 1, "no backup"
@@ -173,6 +180,41 @@ async def test_restore_puts_factory_config_back(hub, shell):
     shell.files[CFG_PATH] = json.dumps(redirect_config(FACTORY_CFG, "x", 1, True)[0]).encode()
     await Provisioner(hub, {"method": "ssh", "host": "10.0.0.9"}).restore()
     assert json.loads(shell.files[CFG_PATH]) == FACTORY_CFG
+    assert not any("q stop" in c for c in shell.commands)  # voice-only: no cloud files to swap
+
+
+async def test_restore_brings_cloud_files_back(hub, shell):
+    shell.files[provision.BACKUP_ORIG] = json.dumps(FACTORY_CFG).encode()
+    shell.files[CFG_PATH] = json.dumps(redirect_config(FACTORY_CFG, "x", 1, True)[0]).encode()
+    shell.files[provision.CLOUD_BACKUP] = b"cloud user config"
+    result = await Provisioner(hub, {"method": "adb", "host": "10.0.0.9"}).restore()
+    assert json.loads(shell.files[CFG_PATH]) == FACTORY_CFG
+    assert shell.files[provision.USER_CONFIG] == b"cloud user config"
+    assert provision.ADAPTER_STATE in shell.files
+    assert provision.CLOUD_BACKUP not in shell.files and provision.CLOUD_RESTORED in shell.files
+    stop = next(i for i, c in enumerate(shell.commands) if c.endswith("q stop"))
+    swap = next(i for i, c in enumerate(shell.commands) if provision.ADAPTER_STATE in c)
+    start = next(i for i, c in enumerate(shell.commands) if "q restart" in c)
+    assert stop < swap < start
+    assert result["device_id"] == "DEV1"
+
+
+async def test_restore_starts_quasar_even_if_cloud_files_fail(hub, shell):
+    shell.files[provision.BACKUP_ORIG] = json.dumps(FACTORY_CFG).encode()
+    shell.files[provision.CLOUD_BACKUP] = b"cloud"
+    original_run = shell.run
+
+    async def run(command: str):
+        if provision.ADAPTER_STATE in command:
+            shell.commands.append(command)
+            return 1, "tar: short read"
+        return await original_run(command)
+
+    shell.run = run
+    with pytest.raises(ProvisionError) as err:
+        await Provisioner(hub, {"method": "ssh", "host": "10.0.0.9"}).restore()
+    assert err.value.code == "station_error"
+    assert any("q restart" in c for c in shell.commands)
 
 
 async def test_seed_prefers_cloud_backup_and_richer_config(hub, shell):

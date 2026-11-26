@@ -3,7 +3,9 @@
 Everything happens with stock BusyBox tools on the station: the adapter reads ``quasar.cfg`` and the cloud seed
 files, edits the JSON itself, uploads the result and restarts quasar. Backups stay on the station's ``/data``:
 ``quasar.cfg.orig`` (factory, never overwritten), ``quasar.cfg.prev`` (before the last change, used for the
-automatic rollback) and ``quasar-cloud-backup.tar`` (cloud authorization).
+automatic rollback) and ``quasar-cloud-backup.tar`` (cloud authorization). Restoring puts the cloud files back
+too, keeps what the station had with the adapter in ``quasar-adapter-state.tar`` and renames the cloud backup to
+``quasar-cloud-backup.restored.tar``, so the next unbinding takes a fresh one.
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ BACKUP_PREV = "/data/quasar.cfg.prev"
 CFG_UPLOAD = "/data/quasar.cfg.new"
 CLOUD_BACKUP = "/data/quasar-cloud-backup.tar"
 CLOUD_FILES = "account_storage.dat devices.json registered initialized data/user_config.dat"
+CLOUD_RESTORED = "/data/quasar-cloud-backup.restored.tar"
+ADAPTER_STATE = "/data/quasar-adapter-state.tar"
 DEVICES_JSON = "/data/quasar/devices.json"
 USER_CONFIG = "/data/quasar/data/user_config.dat"
 SEED_TMP = "/tmp/quasar_adapter_seed"
@@ -379,16 +383,36 @@ class Provisioner:
             await shell.close()
 
     async def restore(self) -> dict:
-        """Put the factory quasar.cfg back: the station returns to the Yandex cloud."""
+        """Put the station back as it was before unbinding: factory quasar.cfg and, if any, the cloud files."""
         shell = await self._open()
         try:
             info = await self._probe(shell)
             rc, _ = await shell.run(f"[ -f {BACKUP_ORIG} ]")
             if rc:
                 raise ProvisionError("no_backup", f"на станции нет {BACKUP_ORIG}")
-            await self._install(shell, await shell.read(BACKUP_ORIG))
-            await self._restart_quasar(shell)
-            self._step("заводской quasar.cfg восстановлен, quasar перезапускается")
+            rc, _ = await shell.run(f"[ -f {CLOUD_BACKUP} ]")
+            cloud_files = rc == 0  # only a full unbinding touched them
+            if cloud_files:
+                await shell.run(f"{QUASAR_DIR}/q stop")  # quasar rewrites these files while running
+            try:
+                await self._install(shell, await shell.read(BACKUP_ORIG))
+                self._step("заводской quasar.cfg восстановлен")
+                if cloud_files:
+                    rc, out = await shell.run(self._restore_cloud_files_script())
+                    if rc:
+                        raise ProvisionError("station_error", f"cannot restore cloud files: {out.strip()[:200]}")
+                    self._step(f"авторизация станции восстановлена, состояние с адаптером сохранено в {ADAPTER_STATE}")
+            finally:
+                await self._restart_quasar(shell)
         finally:
             await shell.close()
         return {"device_id": info["device_id"], "steps": self.steps}
+
+    @staticmethod
+    def _restore_cloud_files_script() -> str:
+        """Save the adapter-era files, unpack the cloud backup over them and retire the backup."""
+        return (
+            f"cd /data/quasar && files=; for f in {CLOUD_FILES}; do [ -e $f ] && files=\"$files $f\"; done; "
+            f"tar -cf {ADAPTER_STATE} $files && tar -xf {CLOUD_BACKUP} -C /data/quasar && "
+            f"mv {CLOUD_BACKUP} {CLOUD_RESTORED} && sync"
+        )
