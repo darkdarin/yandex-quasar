@@ -12,7 +12,7 @@ ARG QUASAR_PROTOS_COMMIT=1044fbdfcd0c2d6d8a26681e31186d13fbb5aef6
 COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
 COPY adapter /tmp/src
 
-RUN apk add --no-cache ffmpeg openssl \
+RUN apk add --no-cache ffmpeg openssl tzdata \
     && apk add --no-cache --virtual .build-deps git protobuf-dev \
     && cd /tmp/src \
     && uv export --frozen --no-dev --no-emit-project --no-header -o /tmp/requirements.txt \

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import functools
 import logging
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from . import alarms
 from .config import Config
 from .glagol import GlagolClient
 from .sendspin import SendspinPlayer
@@ -40,6 +42,7 @@ class Hub:
         self.glagol: dict[str, GlagolClient] = {}
         self.sendspin: dict[str, SendspinPlayer] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._alarm_tasks: dict[str, asyncio.Task] = {}
         self._registry_path = config.data_dir / "stations.json"
         self._load_registry()
 
@@ -66,8 +69,12 @@ class Hub:
 
     async def start(self) -> None:
         self.http = aiohttp.ClientSession()
+        for station in self.stations.values():
+            self.schedule_alarms(station)
 
     async def stop(self) -> None:
+        for task in self._alarm_tasks.values():
+            task.cancel()
         for player in list(self.sendspin.values()):
             await player.stop()
         for client in list(self.glagol.values()):
@@ -87,7 +94,7 @@ class Hub:
         if not self._registry_path.exists():
             return
         for item in json.loads(self._registry_path.read_text(encoding="utf-8")):
-            self.stations[item["device_id"]] = Station(
+            station = self.stations[item["device_id"]] = Station(
                 device_id=item["device_id"], platform=item.get("platform", ""),
                 firmware=item.get("firmware", ""), name=item.get("name", ""),
                 wake_word=item.get("wake_word", "alisa"), mic_preamp=item.get("mic_preamp", True),
@@ -97,13 +104,15 @@ class Hub:
                 drop_preroll=item.get("drop_preroll", False) if item.get("audio_defaults") == AUDIO_DEFAULTS else False,
                 include_wake_word=item.get("include_wake_word", False),
             )
+            station.state.alarms = alarms.prune(item.get("alarms") or [])
 
     def save_registry(self) -> None:
         data = [
             {"device_id": s.device_id, "platform": s.platform, "firmware": s.firmware, "name": s.name,
              "wake_word": s.wake_word, "mic_preamp": s.mic_preamp,
              "trim_wake_word": s.trim_wake_word, "drop_preroll": s.drop_preroll,
-             "include_wake_word": s.include_wake_word, "audio_defaults": AUDIO_DEFAULTS}
+             "include_wake_word": s.include_wake_word, "audio_defaults": AUDIO_DEFAULTS,
+             "alarms": s.state.alarms}
             for s in self.stations.values()
         ]
         self._registry_path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -168,6 +177,33 @@ class Hub:
         if station is None:
             station = Station(device_id=device_id)
         return station
+
+    # ---- alarms ---------------------------------------------------------------------------------------------
+
+    def set_alarms(self, station: Station, alarm_list: list[dict[str, Any]]) -> None:
+        station.state.alarms = alarm_list
+        self.save_registry()
+        self.emit_state(station)
+        self.schedule_alarms(station)
+
+    def schedule_alarms(self, station: Station) -> None:
+        """The station tells nobody that an alarm rang: the adapter keeps time and reports it to HA itself."""
+        if (old := self._alarm_tasks.pop(station.device_id, None)) is not None:
+            old.cancel()
+        rings = [ring for alarm in station.state.alarms if (ring := alarms.next_ring(alarm)) is not None]
+        if rings:
+            self._alarm_tasks[station.device_id] = asyncio.create_task(self._ring_at(station, min(rings)))
+
+    async def _ring_at(self, station: Station, when: datetime) -> None:
+        while (left := (when - datetime.now(timezone.utc)).total_seconds()) > 0:
+            await asyncio.sleep(min(left, 3600))  # short naps: wall-clock jumps and host sleep do not delay it
+        before = when - timedelta(seconds=1)
+        for alarm in station.state.alarms:
+            if alarms.next_ring(alarm, before) == when:
+                _LOGGER.info("[%s] alarm %s rings", station.device_id, alarm["alarm_id"])
+                self.emit(station, "alarm.fired", {"alarm": alarm})
+        self._alarm_tasks.pop(station.device_id, None)
+        self.set_alarms(station, alarms.prune(station.state.alarms, when))
 
     # ---- HA side --------------------------------------------------------------------------------------------
 

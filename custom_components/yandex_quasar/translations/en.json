@@ -94,6 +94,9 @@
           "station_offline": "Station offline",
           "adapter_offline": "Adapter offline"
         }
+      },
+      "next_alarm": {
+        "name": "Next alarm"
       }
     },
     "select": {
@@ -130,6 +133,18 @@
       },
       "include_wake_word": {
         "name": "Include wake word"
+      }
+    },
+    "event": {
+      "alarm": {
+        "name": "Alarm",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "alarm_fired": "Alarm rang"
+            }
+          }
+        }
       }
     }
   },
@@ -215,6 +230,78 @@
         "full": "Fully unbind from the Yandex cloud (recommended)",
         "voice": "Voice through Home Assistant only"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    }
+  },
+  "services": {
+    "set_alarm": {
+      "name": "Set alarm",
+      "description": "Alarm on the station: it rings and shows it by itself. Without weekdays and date it rings once, at the next such time.",
+      "fields": {
+        "device_id": {
+          "name": "Station",
+          "description": "Yandex Station to ring on."
+        },
+        "time": {
+          "name": "Time",
+          "description": "Local time to ring."
+        },
+        "weekdays": {
+          "name": "Weekdays",
+          "description": "Repeat on these days."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Ring once on this day (instead of weekdays)."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Alarm label."
+        },
+        "alarm_id": {
+          "name": "Alarm ID",
+          "description": "Replace the alarm with this ID. Empty: a new alarm."
+        }
+      }
+    },
+    "cancel_alarm": {
+      "name": "Cancel alarm",
+      "description": "Cancels a station alarm, all of them without an ID.",
+      "fields": {
+        "device_id": {
+          "name": "Station",
+          "description": "Yandex Station."
+        },
+        "alarm_id": {
+          "name": "Alarm ID",
+          "description": "From the alarms attribute of the Next alarm sensor. Empty: cancel all."
+        }
+      }
+    },
+    "stop_alarm": {
+      "name": "Stop alarm",
+      "description": "Silences the station's ringing alarm.",
+      "fields": {
+        "device_id": {
+          "name": "Station",
+          "description": "Yandex Station."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_a_station": {
+      "message": "Device {device} is not a Yandex Station of this integration."
     }
   }
 }

@@ -1,0 +1,25 @@
+{
+  "entity": {
+    "sensor": {
+      "next_alarm": {
+        "default": "mdi:alarm"
+      }
+    },
+    "event": {
+      "alarm": {
+        "default": "mdi:alarm-bell"
+      }
+    }
+  },
+  "services": {
+    "set_alarm": {
+      "service": "mdi:alarm-plus"
+    },
+    "cancel_alarm": {
+      "service": "mdi:alarm-off"
+    },
+    "stop_alarm": {
+      "service": "mdi:alarm-snooze"
+    }
+  }
+}

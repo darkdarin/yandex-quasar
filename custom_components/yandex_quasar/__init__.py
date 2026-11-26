@@ -9,12 +9,18 @@ from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .client import AdapterAuthError, AdapterClient, AdapterConnectionError
 from .const import CONF_TOKEN, DOMAIN
+from .services import async_setup_services
 
-PLATFORMS = [Platform.ASSIST_SATELLITE, Platform.MEDIA_PLAYER, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [
+    Platform.ASSIST_SATELLITE, Platform.EVENT, Platform.MEDIA_PLAYER, Platform.SELECT, Platform.SENSOR, Platform.SWITCH,
+]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 @dataclass
@@ -23,6 +29,11 @@ class YandexQuasarData:
 
 
 type YandexQuasarConfigEntry = ConfigEntry[YandexQuasarData]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: YandexQuasarConfigEntry) -> bool:

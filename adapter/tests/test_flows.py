@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestServer
 from google.protobuf.json_format import MessageToDict
 
 from quasar_adapter import aapi
+from quasar_adapter.server import HUB_KEY
 
 from .conftest import DEVICE_ID, FakeStation, make_opus, make_opus_expr
 
@@ -497,3 +498,76 @@ async def test_empty_spotter_phrase_falls_back_to_wake_word(station, ha):
     await station.expect_event("InputStartAck")
     start = await ha.expect("voice.start")
     assert start["data"]["wake_word"] == "Алиса" and start["data"]["reason"] == "wake_word"
+
+
+async def test_native_alarms(adapter, station, ha):
+    reply = await ha.request("alarm.set", DEVICE_ID, {
+        "alarm_id": "a1", "time": "7:30", "weekdays": ["Mon", "fri"], "title": "Работа",
+        "timezone": "Europe/Madrid", "offset_seconds": 3600,
+    })
+    assert reply["ok"] and reply["data"]["alarm"]["time"] == "07:30"
+    d = (await station.expect_event("Push")).Event.Push.Directives[0]
+    assert d.Name == "alarm_add_directive" and d.DirectiveType == aapi.ALARM_DIRECTIVE_TYPES["add"]
+    payload = aapi._Alarm.TAlarmAddDirective()
+    payload.ParseFromString(d.PayloadRaw)
+    alarm = payload.Alarm
+    assert (alarm.AlarmId, alarm.LocalTime.Hours, alarm.LocalTime.Minutes, alarm.Title) == ("a1", 7, 30, "Работа")
+    assert [day.Weekday for day in alarm.ActivationDays] == [1, 5]
+    assert (alarm.Timezone.TimezoneName, alarm.Timezone.OffsetSeconds) == ("Europe/Madrid", 3600)
+    while not (state := await ha.expect("station.state"))["data"]["alarms"]:
+        pass  # earlier states from the connection
+    assert [a["alarm_id"] for a in state["data"]["alarms"]] == ["a1"]
+
+    # the same id replaces the alarm: cancel, then add
+    assert (await ha.request("alarm.set", DEVICE_ID, {"alarm_id": "a1", "time": "08:00", "weekdays": ["sat"]}))["ok"]
+    names = [(await station.expect_event("Push")).Event.Push.Directives[0].Name for _ in range(2)]
+    assert names == ["alarm_cancel_directive", "alarm_add_directive"]
+    assert len((await ha.request("alarm.list", DEVICE_ID))["data"]["alarms"]) == 1
+
+    assert (await ha.request("alarm.set", DEVICE_ID, {"time": "25:00"}))["error"]["code"] == "invalid"
+    assert (await ha.request("alarm.cancel", DEVICE_ID, {"alarm_id": "nope"}))["error"]["code"] == "not_found"
+
+    assert (await ha.request("alarm.stop", DEVICE_ID))["ok"]
+    d = (await station.expect_event("Push")).Event.Push.Directives[0]
+    stop = aapi._Alarm.TAlarmStopDirective()
+    stop.ParseFromString(d.PayloadRaw)
+    assert d.Name == "alarm_stop_directive" and stop.StopMedia
+
+    reply = await ha.request("alarm.cancel", DEVICE_ID, {})
+    assert reply["ok"] and reply["data"]["alarms"] == []
+    assert (await station.expect_event("Push")).Event.Push.Directives[0].Name == "alarm_cancel_directive"
+
+
+async def test_alarms_survive_restart_and_sync_on_request(adapter, station, ha):
+    """Saved alarms survive a restart; alarm.sync gives the station the whole list (alarm_update)."""
+    assert (await ha.request("alarm.set", DEVICE_ID, {"alarm_id": "a1", "time": "07:00", "weekdays": ["mon"]}))["ok"]
+    await station.expect_event("Push")
+    server, _http = adapter
+    hub = server.app[HUB_KEY]
+    hub._load_registry()
+    assert [a["alarm_id"] for a in hub.stations[DEVICE_ID].state.alarms] == ["a1"]
+    assert (await ha.request("alarm.sync", DEVICE_ID))["ok"]
+    d = (await station.expect_event("Push")).Event.Push.Directives[0]
+    payload = aapi._Alarm.TAlarmUpdateDirective()
+    payload.ParseFromString(d.PayloadRaw)
+    assert d.Name == "alarm_update_directive" and [a.AlarmId for a in payload.Alarms] == ["a1"]
+
+
+async def test_alarm_fired_is_reported_and_one_off_alarm_dropped(adapter, station, ha, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from quasar_adapter import alarms
+
+    server, _http = adapter
+    hub = server.app[HUB_KEY]
+    st = hub.stations[DEVICE_ID]
+    now = datetime.now(timezone.utc)
+    ring = now + timedelta(seconds=0.3)
+    one_off = {"alarm_id": "once", "time": "00:00", "weekdays": [], "date": "2000-01-01", "title": "",
+               "timezone": "", "offset_seconds": 0}
+    monkeypatch.setattr(alarms, "next_ring", lambda a, now=None: ring if (now or datetime.now(timezone.utc)) < ring else None)
+    hub.set_alarms(st, [one_off])
+    fired = await ha.expect("alarm.fired", timeout=3)
+    assert fired["data"]["alarm"]["alarm_id"] == "once"
+    await asyncio.sleep(0.05)
+    assert st.state.alarms == []

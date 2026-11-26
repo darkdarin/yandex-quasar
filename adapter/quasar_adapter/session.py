@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 from google.protobuf.json_format import MessageToDict
 
-from . import aapi
+from . import aapi, alarms
 from .audio import MicDecoder, OpusTranscoder, SpotterTailTrimmer, apply_gain, pcm_level_db
 from .media import resolve_media_url
 from .station import WAKE_WORDS
@@ -876,6 +876,55 @@ class StationSession:
 
     async def _cmd_timer_stop(self, data: dict) -> dict:
         return await self._timer_action("stop", data)
+
+    # Native station alarms: the station rings and shows them by itself; the adapter keeps the list (alarms.py).
+    def _alarms_changed(self, alarms_list: list[dict]) -> dict:
+        self.hub.set_alarms(self.station, alarms_list)
+        return {"alarms": alarms_list}
+
+    async def _cmd_alarm_list(self, data: dict) -> dict:
+        return {"alarms": self.station.state.alarms}
+
+    async def _cmd_alarm_set(self, data: dict) -> dict:
+        """Add an alarm, or replace the one with the same alarm_id."""
+        try:
+            alarm = alarms.normalize(data)
+        except ValueError as err:
+            raise CommandError("invalid", str(err)) from err
+        current = alarms.prune(self.station.state.alarms)
+        if any(a["alarm_id"] == alarm["alarm_id"] for a in current):
+            await self._push(aapi.alarm_cancel(alarm["alarm_id"]))
+        await self._push(aapi.alarm_add(alarm))
+        _LOGGER.info("[%s] alarm %s set: %s %s", self.station.device_id, alarm["alarm_id"], alarm["time"],
+                     ",".join(alarm["weekdays"]) or alarm["date"])
+        result = self._alarms_changed([a for a in current if a["alarm_id"] != alarm["alarm_id"]] + [alarm])
+        return {"alarm": alarm, **result}
+
+    async def _cmd_alarm_cancel(self, data: dict) -> dict:
+        """Cancel one alarm by alarm_id, or all of them without it."""
+        alarm_id = data.get("alarm_id")
+        current = self.station.state.alarms
+        cancel = [a for a in current if alarm_id in (None, a["alarm_id"])]
+        if alarm_id and not cancel:
+            raise CommandError("not_found", f"no alarm {alarm_id}")
+        for alarm in cancel:
+            await self._push(aapi.alarm_cancel(alarm["alarm_id"]))
+        _LOGGER.info("[%s] alarms cancelled: %s", self.station.device_id, [a["alarm_id"] for a in cancel])
+        return self._alarms_changed(alarms.prune([a for a in current if a not in cancel]))
+
+    async def _cmd_alarm_sync(self, data: dict) -> dict:
+        """Replace the station's whole alarm list with the adapter's (alarm_update replaces, it does not merge).
+
+        Not done on connect: it would also wipe alarms set through Yandex before the station was unbound.
+        """
+        current = alarms.prune(self.station.state.alarms)
+        await self._push(aapi.alarm_update(current))
+        return self._alarms_changed(current)
+
+    async def _cmd_alarm_stop(self, data: dict) -> dict:
+        """Silence a ringing alarm."""
+        await self._push(aapi.alarm_stop())
+        return {}
 
     async def _cmd_debug_sound(self, data: dict) -> dict:
         """Experiments: play a stored station sound by EStoredSound name."""

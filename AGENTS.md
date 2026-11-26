@@ -8,7 +8,7 @@
 - `adapter/` — **Quasar Adapter** (Python, asyncio/aiohttp). Эмулирует `quasar.yandex.net` и uniproxy для станции,
   отдаёт HA свой WebSocket API.
 - `custom_components/yandex_quasar/` — **HA custom integration** (`assist_satellite`, `media_player`, `sensor`,
-  `select`, `switch`; позже `event`, `light`).
+  `select`, `switch`, `event`; LLM-инструменты в `llm.py`, сервисы в `services.py`; позже `light`).
 - `station-agent/` — в планах, в репозитории пока нет: опциональный агент на станции (Go) — кнопки, LED, мьют.
 - `ha-addon/` — упаковка адаптера как HA OS add-on (app). `README.md` и `DOCS.md` там — для пользователей
   (страница app в магазине и вкладка «Документация»); сборка и релиз описаны ниже.

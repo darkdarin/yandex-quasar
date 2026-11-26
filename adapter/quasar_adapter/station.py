@@ -49,6 +49,7 @@ class StationState:
     muted: bool = False
     mic_muted: bool = False
     player: PlayerState = field(default_factory=PlayerState)
+    alarms: list[dict[str, Any]] = field(default_factory=list)  # see alarms.py
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

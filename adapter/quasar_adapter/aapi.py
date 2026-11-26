@@ -192,7 +192,7 @@ _Alarm = alarm_capability_pb2.TAlarmCapability
 # NAlice.TCapability.EDirectiveType
 TIMER_DIRECTIVE_TYPES = {"set": 112, "cancel": 113, "pause": 114, "resume": 115, "stop": 276}
 ALARM_DIRECTIVE_TYPES = {"add": 32, "update": 34, "snooze": 116, "stop": 118, "cancel": 132}
-WEEKDAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]  # TAlarm.EWeekday: MONDAY = 1 … SUNDAY = 7
 
 
 def _typed(name: str, directive_type: int, payload: Any) -> dict:
@@ -219,25 +219,36 @@ def timer_action(action: str, timer_id: str) -> dict:
     return _typed(f"timer_{action}_directive", TIMER_DIRECTIVE_TYPES[action], message)
 
 
-def alarm_add(alarm_id: str, hours: int, minutes: int, *, weekdays: list[str] | None = None,
-              date: tuple[int, int, int] | None = None, timezone: str = "", offset_seconds: int = 0,
-              title: str = "") -> dict:
-    payload = _Alarm.TAlarmAddDirective()
-    alarm = payload.Alarm
-    alarm.AlarmId = alarm_id
+def _fill_alarm(alarm: Any, spec: dict) -> None:
+    """TAlarm from the adapter's alarm dict: alarm_id, time "HH:MM", weekdays or date "YYYY-MM-DD", title, timezone."""
+    alarm.AlarmId = spec["alarm_id"]
+    hours, minutes = (int(part) for part in spec["time"].split(":")[:2])
     alarm.LocalTime.Hours = hours
     alarm.LocalTime.Minutes = minutes
-    if timezone:
-        alarm.Timezone.TimezoneName = timezone
-        alarm.Timezone.OffsetSeconds = offset_seconds
-    for day in weekdays or []:
+    if spec.get("timezone"):
+        alarm.Timezone.TimezoneName = spec["timezone"]
+        alarm.Timezone.OffsetSeconds = int(spec.get("offset_seconds") or 0)
+    for day in spec.get("weekdays") or []:
         alarm.ActivationDays.add().Weekday = WEEKDAYS.index(day) + 1
-    if date is not None:
+    if spec.get("date"):
         d = alarm.ActivationDays.add().Date
-        d.Year, d.Month, d.Day = date
-    alarm.Title = title
+        d.Year, d.Month, d.Day = (int(part) for part in spec["date"].split("-"))
+    alarm.Title = spec.get("title") or ""
     alarm.EditTimestamp = int(time.time() * 1000)
+
+
+def alarm_add(spec: dict) -> dict:
+    payload = _Alarm.TAlarmAddDirective()
+    _fill_alarm(payload.Alarm, spec)
     return _typed("alarm_add_directive", ALARM_DIRECTIVE_TYPES["add"], payload)
+
+
+def alarm_update(specs: list[dict]) -> dict:
+    """The station's whole alarm list at once."""
+    payload = _Alarm.TAlarmUpdateDirective()
+    for spec in specs:
+        _fill_alarm(payload.Alarms.add(), spec)
+    return _typed("alarm_update_directive", ALARM_DIRECTIVE_TYPES["update"], payload)
 
 
 def alarm_cancel(alarm_id: str) -> dict:
@@ -247,7 +258,10 @@ def alarm_cancel(alarm_id: str) -> dict:
 
 
 def alarm_stop() -> dict:
-    return _typed("alarm_stop_directive", ALARM_DIRECTIVE_TYPES["stop"], _Alarm.TAlarmStopDirective())
+    """Silence a ringing alarm; StopMedia as the station's own "Alisa, stop" sends it."""
+    payload = _Alarm.TAlarmStopDirective()
+    payload.StopMedia = True
+    return _typed("alarm_stop_directive", ALARM_DIRECTIVE_TYPES["stop"], payload)
 
 LOCAL_AUDIO_FILE_PLAY_TYPE = 47  # NAlice.TCapability.EDirectiveType.LocalAudioFilePlayDirectiveType
 CHANNEL_DIALOG = 1  # NAlice.EDirectiveChannel.Dialog

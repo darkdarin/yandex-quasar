@@ -1,0 +1,55 @@
+set_alarm:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: yandex_quasar
+    time:
+      required: true
+      example: "07:30"
+      selector:
+        time:
+    weekdays:
+      selector:
+        select:
+          multiple: true
+          translation_key: weekday
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+    date:
+      selector:
+        date:
+    title:
+      example: "Работа"
+      selector:
+        text:
+    alarm_id:
+      advanced: true
+      selector:
+        text:
+
+cancel_alarm:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: yandex_quasar
+    alarm_id:
+      selector:
+        text:
+
+stop_alarm:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: yandex_quasar
